@@ -9,7 +9,15 @@ export function createRuntime() {
     },
     async resetEnv() {
       const toRun = hooks.splice(0, hooks.length);
-      for (const fn of toRun) await fn();
+      const errors = [];
+      for (const fn of toRun) {
+        try {
+          await fn();
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+      if (errors.length) console.warn("[SDD] resetEnv: hook errors", errors);
     },
   };
 }
@@ -33,9 +41,15 @@ export function createRuntime(): Runtime {
     },
     async resetEnv() {
       const toRun = hooks.splice(0, hooks.length);
+      const errors: unknown[] = [];
       for (const fn of toRun) {
-        await fn();
+        try {
+          await fn();
+        } catch (err) {
+          errors.push(err);
+        }
       }
+      if (errors.length) console.warn("[SDD] resetEnv: hook errors", errors);
     },
   };
 }
@@ -66,7 +80,10 @@ export function getRuntime() {
 }
 
 function attachGlobal() {
-  const g = globalThis;
+  const g =
+    (typeof globalThis !== "undefined" && globalThis) ||
+    (typeof getApp === "function" && getApp()) ||
+    {};
   if (g.SDD?.__inited) return;
   g.SDD = {
     __inited: true,
@@ -103,7 +120,10 @@ export function getRuntime() {
 }
 
 function attachGlobal() {
-  const g: any = globalThis as any;
+  const g: any =
+    (typeof globalThis !== "undefined" && (globalThis as any)) ||
+    ((typeof getApp === "function" ? getApp() : undefined) as any) ||
+    {};
   if (g.SDD?.__inited) return;
   g.SDD = {
     __inited: true,

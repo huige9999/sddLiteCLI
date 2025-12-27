@@ -12,7 +12,7 @@ export async function cmdAddModule(ctx, parsed) {
   const modulePath = parsed.args[0];
   if (!modulePath) throw new Error("Missing <modulePath>");
 
-  const report = createReport();
+  const report = createReport({ title: "add-module" });
   const projectRoot = ctx.cwd;
   const explicitLang = parsed.flags.ts ? "ts" : parsed.flags.js ? "js" : undefined;
   const ext = await detectPreferredLangExt(projectRoot, { explicit: explicitLang });

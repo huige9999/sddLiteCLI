@@ -1,20 +1,22 @@
 import path from "node:path";
-import { ensureDir, pathExists, writeIfAbsent } from "../core/fs.js";
+import { ensureDir, pathExists, writeGenerated, writeIfAbsent } from "../core/fs.js";
 import { promptSelect, promptText } from "../core/io.js";
 import { createReport, printReport } from "../core/report.js";
 import { detectPreferredLangExt } from "../core/project.js";
+import { detectMpRoot } from "../core/mp.js";
 import {
   tplHelperApiPatch,
   tplScenarioApiVariants,
   tplScenarioBasic,
 } from "../templates/module.js";
 import { ensureModuleScaffold } from "./add-module.js";
+import { generateMpManifest } from "./manifest.js";
 
 export async function cmdAddScenario(ctx, parsed) {
   const modulePath = parsed.args[0];
   if (!modulePath) throw new Error("Missing <modulePath>");
 
-  const report = createReport();
+  const report = createReport({ title: "add-scenario" });
   const projectRoot = ctx.cwd;
   const explicitLang = parsed.flags.ts ? "ts" : parsed.flags.js ? "js" : undefined;
   const ext = await detectPreferredLangExt(projectRoot, { explicit: explicitLang });
@@ -49,6 +51,7 @@ export async function cmdAddScenario(ctx, parsed) {
     await writeIfAbsent(scenarioFile, tplScenarioBasic({ id, title, ext }), report);
   }
 
+  await maybeRefreshMpManifest({ projectRoot, scenarioFile, ext, report });
   printReport(report);
 }
 
@@ -56,4 +59,17 @@ function normalizeTemplate(t) {
   if (!t) return "";
   if (t === "basic" || t === "api-variants") return t;
   return "";
+}
+
+async function maybeRefreshMpManifest({ projectRoot, scenarioFile, ext, report }) {
+  const mpRoot = await detectMpRoot(projectRoot);
+  if (!mpRoot) return;
+
+  const rel = path.relative(mpRoot, scenarioFile);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return;
+
+  const sddDir = path.join(mpRoot, "__sdd__");
+  await writeGenerated(path.join(sddDir, `manifest.${ext}`), await generateMpManifest(mpRoot, ext), report, {
+    updateGenerated: true,
+  });
 }

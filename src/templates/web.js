@@ -9,7 +9,17 @@ export function createRuntime() {
     },
     async resetEnv() {
       const toRun = hooks.splice(0, hooks.length);
-      for (const fn of toRun) await fn();
+      const errors = [];
+      for (const fn of toRun) {
+        try {
+          await fn();
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+      if (errors.length) {
+        console.warn("[SDD] resetEnv: hook errors", errors);
+      }
     },
   };
 }
@@ -33,8 +43,16 @@ export function createRuntime(): Runtime {
     },
     async resetEnv() {
       const toRun = hooks.splice(0, hooks.length);
+      const errors: unknown[] = [];
       for (const fn of toRun) {
-        await fn();
+        try {
+          await fn();
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+      if (errors.length) {
+        console.warn("[SDD] resetEnv: hook errors", errors);
       }
     },
   };
@@ -42,7 +60,7 @@ export function createRuntime(): Runtime {
 `.trimStart();
 }
 
-export function tplWebDiscover(ext) {
+export function tplWebDiscoverVite(ext) {
   if (ext === "js") {
     return `
 function isScenario(x) {
@@ -57,17 +75,63 @@ function isScenario(x) {
 
 export async function discoverScenarios() {
   const out = [];
-
-  const glob = import.meta && import.meta.glob;
-  if (typeof glob === "function") {
-    const modules = glob("../**/__sdd__/scenarios/**/*.scenario.{ts,js}", { eager: true });
-    for (const mod of Object.values(modules)) {
-      const scenario = mod?.default;
-      if (isScenario(scenario)) out.push(scenario);
-    }
-    return out.sort((a, b) => a.id.localeCompare(b.id));
+  const modules = import.meta.glob("../**/__sdd__/scenarios/**/*.scenario.{ts,js}", { eager: true });
+  for (const mod of Object.values(modules)) {
+    const scenario = mod?.default;
+    if (isScenario(scenario)) out.push(scenario);
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+`.trimStart();
   }
 
+  return `
+import type { Runtime } from "./runtime";
+
+export type Scenario = {
+  id: string;
+  title: string;
+  note?: string;
+  setup(ctx: { runtime: Runtime; options?: any }): void | Promise<void>;
+};
+
+function isScenario(x: any): x is Scenario {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof x.id === "string" &&
+    typeof x.title === "string" &&
+    typeof x.setup === "function"
+  );
+}
+
+export async function discoverScenarios(): Promise<Scenario[]> {
+  const out: Scenario[] = [];
+  const modules = import.meta.glob("../**/__sdd__/scenarios/**/*.scenario.{ts,js}", { eager: true });
+  for (const mod of Object.values(modules) as any[]) {
+    const scenario = mod?.default;
+    if (isScenario(scenario)) out.push(scenario);
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+`.trimStart();
+}
+
+export function tplWebDiscoverWebpack(ext) {
+  if (ext === "js") {
+    return `
+function isScenario(x) {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof x.id === "string" &&
+    typeof x.title === "string" &&
+    typeof x.setup === "function"
+  );
+}
+
+export async function discoverScenarios() {
+  const out = [];
   if (typeof require !== "undefined" && typeof require.context === "function") {
     const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
     for (const key of ctx.keys()) {
@@ -75,10 +139,8 @@ export async function discoverScenarios() {
       const scenario = mod?.default;
       if (isScenario(scenario)) out.push(scenario);
     }
-    return out.sort((a, b) => a.id.localeCompare(b.id));
   }
-
-  return out;
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 `.trimStart();
   }
@@ -107,17 +169,6 @@ function isScenario(x: any): x is Scenario {
 
 export async function discoverScenarios(): Promise<Scenario[]> {
   const out: Scenario[] = [];
-
-  const glob = (import.meta as any).glob;
-  if (typeof glob === "function") {
-    const modules = glob("../**/__sdd__/scenarios/**/*.scenario.{ts,js}", { eager: true });
-    for (const mod of Object.values(modules) as any[]) {
-      const scenario = mod?.default;
-      if (isScenario(scenario)) out.push(scenario);
-    }
-    return out.sort((a, b) => a.id.localeCompare(b.id));
-  }
-
   if (typeof require?.context === "function") {
     const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
     for (const key of ctx.keys()) {
@@ -125,10 +176,8 @@ export async function discoverScenarios(): Promise<Scenario[]> {
       const scenario = mod?.default;
       if (isScenario(scenario)) out.push(scenario);
     }
-    return out.sort((a, b) => a.id.localeCompare(b.id));
   }
-
-  return out;
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 `.trimStart();
 }

@@ -2,6 +2,7 @@ import { cmdInit } from "./commands/init.js";
 import { cmdAddModule } from "./commands/add-module.js";
 import { cmdAddScenario } from "./commands/add-scenario.js";
 import { cmdDoctor } from "./commands/doctor.js";
+import { cmdManifest } from "./commands/manifest-cmd.js";
 import { parseArgs } from "./core/args.js";
 
 const HELP = `
@@ -12,11 +13,15 @@ Commands:
   init                    Init SDD-lite infrastructure
   add-module <modulePath> Create <modulePath>/__sdd__/ skeleton
   add-scenario <modulePath>  Create a scenario under modulePath
+  manifest                Regenerate mp-wechat manifest
   doctor                  Check current project status
 
 Options:
   --type <vue2|vue3|mp-wechat>   Project type for init
+  --bundler <vite|webpack|auto>  Web bundler (init, default: auto)
   --entry <path>                Entry file for web init (e.g. src/main.ts)
+  --update                       Update generated infra files
+  --force                        Alias of --update
   --ts | --js                   Preferred output language (default: auto)
   --id <id>                     Scenario id (add-scenario)
   --title <title>               Scenario title (add-scenario)
@@ -43,6 +48,9 @@ export async function main(argv) {
     case "add-scenario":
       await cmdAddScenario(ctx, parsed);
       return;
+    case "manifest":
+      await cmdManifest(ctx, parsed);
+      return;
     case "doctor":
       await cmdDoctor(ctx, parsed);
       return;
@@ -51,4 +59,3 @@ export async function main(argv) {
       process.stdout.write(HELP);
   }
 }
-

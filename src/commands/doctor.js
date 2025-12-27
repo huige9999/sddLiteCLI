@@ -16,8 +16,12 @@ export async function cmdDoctor(ctx, parsed) {
   const checks = [];
   const root = ctx.cwd;
 
-  checks.push(...(await doctorWeb(root)));
-  checks.push(...(await doctorMp(root)));
+  const type = String(parsed.flags.type || "auto");
+  const runWeb = type === "auto" || type === "web" || type === "vue2" || type === "vue3";
+  const runMp = type === "auto" || type === "mp-wechat" || type === "mp" || type === "wechat";
+
+  if (runWeb) checks.push(...(await doctorWeb(root)));
+  if (runMp) checks.push(...(await doctorMp(root)));
 
   if (parsed.flags.json) {
     process.stdout.write(JSON.stringify({ checks }, null, 2) + "\n");
@@ -140,4 +144,3 @@ function extractField(text, field) {
   const m = text.match(new RegExp(`${field}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`));
   return m?.[1] || "";
 }
-
