@@ -1,10 +1,19 @@
 {
-  "name": "sdd-lite-cli",
-  "private": true,
+  "name": "@huige9999/sdd-lite",
+  "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "sdd-lite": "bin/sdd-lite.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "docs/",
+    "README.md"
+  ],
   "scripts": {
     "sdd-lite": "node bin/sdd-lite.js",
     "doctor": "node bin/sdd-lite.js doctor",
@@ -14,4 +23,3 @@
     "node": ">=18"
   }
 }
-
