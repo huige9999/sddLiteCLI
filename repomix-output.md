@@ -28,15 +28,13 @@ The content is organized as follows:
 ## Notes
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: bin, package.json, src
+- Only files matching these patterns are included: src, package.json, README.md
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 - Files are sorted by Git change count (files with more changes are at the bottom)
 
 # Directory Structure
 ```
-bin/
-  sdd-lite.js
 src/
   commands/
     add-module.js
@@ -59,6 +57,7 @@ src/
     web.js
   cli.js
 package.json
+README.md
 ```
 
 # Files
@@ -96,31 +95,290 @@ export async function cmdManifest(ctx, parsed) {
 }
 ```
 
-## File: src/core/mp.js
+## File: src/commands/manifest.js
+```javascript
+import path from "node:path";
+import { toPosixPath, walkFiles } from "../core/fs.js";
+
+export async function generateMpManifest(mpRoot, ext) {
+  const scenarioFiles = (await walkFiles(mpRoot)).filter((p) =>
+    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
+  );
+
+  const manifestDir = path.join(mpRoot, "__sdd__");
+  const imports = [];
+  const items = [];
+
+  scenarioFiles.sort((a, b) => a.localeCompare(b));
+  scenarioFiles.forEach((absPath, idx) => {
+    const rel = toPosixPath(path.relative(manifestDir, absPath));
+    const importPath = rel.startsWith(".") ? rel : `./${rel}`;
+    const varName = `s${idx}`;
+    imports.push(`import ${varName} from ${JSON.stringify(importPath)};`);
+    items.push(varName);
+  });
+
+  if (ext === "js") {
+    return [...imports, "", `export const scenarios = [${items.join(", ")}];`, ""].join("\n");
+  }
+
+  return [
+    `import type { Runtime } from "./runtime";`,
+    "",
+    `export type Scenario = {`,
+    `  id: string;`,
+    `  title: string;`,
+    `  note?: string;`,
+    `  setup(ctx: { runtime: Runtime; options?: any }): void | Promise<void>;`,
+    `};`,
+    "",
+    ...imports,
+    "",
+    `export const scenarios: Scenario[] = [${items.join(", ")}];`,
+    "",
+  ].join("\n");
+}
+```
+
+## File: src/core/args.js
+```javascript
+export function parseArgs(argv) {
+  /** @type {Record<string, string | boolean>} */
+  const flags = {};
+  /** @type {string[]} */
+  const positionals = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (!token) continue;
+
+    if (token === "-h" || token === "--help") {
+      flags.help = true;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      const key = token.slice(2);
+      const next = argv[i + 1];
+      if (next && !next.startsWith("-")) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+      continue;
+    }
+
+    positionals.push(token);
+  }
+
+  const command = positionals[0] || "";
+  const args = positionals.slice(1);
+
+  return {
+    command,
+    args,
+    flags,
+    help: Boolean(flags.help),
+  };
+}
+```
+
+## File: src/core/io.js
+```javascript
+import readline from "node:readline";
+
+export async function promptText(message, { defaultValue } = {}) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const q = defaultValue ? `${message} (${defaultValue}): ` : `${message}: `;
+    const answer = await new Promise((resolve) => rl.question(q, resolve));
+    const trimmed = String(answer).trim();
+    return trimmed || defaultValue || "";
+  } finally {
+    rl.close();
+  }
+}
+
+export async function promptSelect(message, options) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    process.stdout.write(`${message}\n`);
+    options.forEach((opt, idx) => {
+      process.stdout.write(`  ${idx + 1}) ${opt}\n`);
+    });
+    const answer = await new Promise((resolve) => rl.question(`Select 1-${options.length}: `, resolve));
+    const n = Number(String(answer).trim());
+    if (!Number.isFinite(n) || n < 1 || n > options.length) {
+      throw new Error(`Invalid selection: ${answer}`);
+    }
+    return options[n - 1];
+  } finally {
+    rl.close();
+  }
+}
+```
+
+## File: src/core/json.js
+```javascript
+import { patchTextFile, readText } from "./fs.js";
+
+export async function readJson(filePath) {
+  const text = await readText(filePath);
+  return JSON.parse(text);
+}
+
+export async function patchJsonFile(filePath, patcher, report) {
+  return await patchTextFile(
+    filePath,
+    (prevText) => {
+      let prevObj;
+      try {
+        prevObj = JSON.parse(prevText);
+      } catch {
+        return null;
+      }
+      const nextObj = patcher(prevObj);
+      if (nextObj == null) return null;
+      const nextText = JSON.stringify(nextObj, null, 2) + "\n";
+      return nextText === prevText ? null : nextText;
+    },
+    report,
+  );
+}
+```
+
+## File: src/core/project.js
 ```javascript
 import path from "node:path";
 import { pathExists } from "./fs.js";
 
-export async function detectMpRoot(projectRoot) {
-  const miniprogramRoot = path.join(projectRoot, "miniprogram");
-  if (await pathExists(path.join(miniprogramRoot, "app.json"))) return miniprogramRoot;
-
-  if (await pathExists(path.join(projectRoot, "app.json"))) return projectRoot;
-
-  return "";
+export async function detectPreferredLangExt(projectRoot, { explicit } = {}) {
+  if (explicit === "ts" || explicit === "js") return explicit;
+  if (await pathExists(path.join(projectRoot, "tsconfig.json"))) return "ts";
+  if (await pathExists(path.join(projectRoot, "src", "main.ts"))) return "ts";
+  if (await pathExists(path.join(projectRoot, "miniprogram", "tsconfig.json"))) return "ts";
+  return "js";
 }
 ```
 
-## File: bin/sdd-lite.js
+## File: src/templates/module.js
 ```javascript
-#!/usr/bin/env node
-import { main } from "../src/cli.js";
+export function tplModuleSddTools(ext) {
+  if (ext === "js") {
+    return `
+export function logScope(scope) {
+  return (...args) => console.log(\`[SDD:\${scope}]\`, ...args);
+}
+`.trimStart();
+  }
 
-main(process.argv.slice(2)).catch((err) => {
-  const message = err instanceof Error ? err.stack || err.message : String(err);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+  return `
+export function logScope(scope: string) {
+  return (...args: any[]) => console.log(\`[SDD:\${scope}]\`, ...args);
+}
+`.trimStart();
+}
+
+export function tplModuleMocksIndex(ext) {
+  if (ext === "js") {
+    return `
+export const mocks = {};
+`.trimStart();
+  }
+
+  return `
+export const mocks = {};
+`.trimStart();
+}
+
+export function tplModuleScenariosReadmeMd() {
+  return `
+# SDD Scenarios (module)
+
+每个场景文件必须：
+
+\`\`\`ts
+export default {
+  id: string,
+  title: string,
+  note?: string,
+  setup({ runtime, options }): void
+}
+\`\`\`
+
+注意：任何副作用都必须通过 \`runtime.onReset\` 登记清理，保证切换场景不污染环境。
+`.trimStart();
+}
+
+export function tplScenarioBasic({ id, title, ext }) {
+  const setupSig = ext === "js" ? "setup({ runtime, options })" : "setup({ runtime, options }: any)";
+  return `
+export default {
+  id: ${JSON.stringify(id)},
+  title: ${JSON.stringify(title)},
+  note: [
+    "人工验证：",
+    "1) 打开目标页面/模块",
+    "2) 运行 window.SDD.run(\\"${id}\\")",
+    "3) 观察 console log / UI 变化是否符合预期",
+  ].join("\\n"),
+  ${setupSig} {
+    console.log("[SDD] setup", ${JSON.stringify(id)}, { options });
+
+    const timer = setInterval(() => {
+      console.log("[SDD] tick", ${JSON.stringify(id)});
+    }, 1000);
+
+    runtime.onReset(() => {
+      clearInterval(timer);
+    });
+  },
+};
+`.trimStart();
+}
+
+export function tplScenarioApiVariants({ id, title, ext }) {
+  const setupSig = ext === "js" ? "setup({ runtime, options })" : "setup({ runtime, options }: any)";
+  return `
+import { installApiPatch } from "../helpers/apiPatch";
+
+export default {
+  id: ${JSON.stringify(id)},
+  title: ${JSON.stringify(title)},
+  note: [
+    "人工验证：",
+    "1) 运行该场景后，触发页面里的接口请求动作",
+    "2) 在 console/Network 面板观察不同 variant 的效果",
+    "3) 切换场景后，拦截必须被清理（不污染其他场景）",
+  ].join("\\n"),
+  ${setupSig} {
+    const uninstall = installApiPatch({
+      runtime,
+      variant: options?.variant ?? "happy-path",
+    });
+    runtime.onReset(uninstall);
+  },
+};
+`.trimStart();
+}
+
+export function tplHelperApiPatch(ext) {
+  const sig = ext === "js" ? "export function installApiPatch({ runtime, variant })" : "export function installApiPatch({ runtime, variant }: any)";
+  return `
+${sig} {
+  void runtime;
+  console.log("[SDD] installApiPatch", { variant });
+
+  // TODO: 在这里做你项目里的 API 拦截/patch（不要绑定 axios/fetch，保持轻量）
+  // TODO: 必须返回可逆的 uninstall（并在 reset 时调用）
+
+  return () => {
+    console.log("[SDD] uninstallApiPatch", { variant });
+  };
+}
+`.trimStart();
+}
 ```
 
 ## File: src/commands/add-module.js
@@ -241,156 +499,6 @@ async function maybeRefreshMpManifest({ projectRoot, scenarioFile, ext, report }
   await writeGenerated(path.join(sddDir, `manifest.${ext}`), await generateMpManifest(mpRoot, ext), report, {
     updateGenerated: true,
   });
-}
-```
-
-## File: src/commands/doctor.js
-```javascript
-import path from "node:path";
-import { pathExists, readText, toPosixPath, walkFiles } from "../core/fs.js";
-import { readJson } from "../core/json.js";
-
-function ok(id, message, fix) {
-  return { id, level: "ok", message, fix };
-}
-function warn(id, message, fix) {
-  return { id, level: "warn", message, fix };
-}
-function fail(id, message, fix) {
-  return { id, level: "fail", message, fix };
-}
-
-export async function cmdDoctor(ctx, parsed) {
-  const checks = [];
-  const root = ctx.cwd;
-
-  const type = String(parsed.flags.type || "auto");
-  const runWeb = type === "auto" || type === "web" || type === "vue2" || type === "vue3";
-  const runMp = type === "auto" || type === "mp-wechat" || type === "mp" || type === "wechat";
-
-  if (runWeb) checks.push(...(await doctorWeb(root)));
-  if (runMp) checks.push(...(await doctorMp(root)));
-
-  if (parsed.flags.json) {
-    process.stdout.write(JSON.stringify({ checks }, null, 2) + "\n");
-    return;
-  }
-
-  for (const c of checks) {
-    const tag = c.level === "ok" ? "[OK]" : c.level === "warn" ? "[WARN]" : "[FAIL]";
-    process.stdout.write(`${tag} ${c.message}\n`);
-    if (c.fix) process.stdout.write(`      fix: ${c.fix}\n`);
-  }
-}
-
-async function doctorWeb(root) {
-  /** @type {any[]} */
-  const out = [];
-  const sddDir = path.join(root, "src", "__sdd__");
-  const boot = path.join(sddDir, "boot.ts");
-  const bootJs = path.join(sddDir, "boot.js");
-
-  if (await pathExists(sddDir)) out.push(ok("web.sddDir", `Found ${toPosixPath("src/__sdd__")}`));
-  else {
-    out.push(warn("web.sddDir", `Missing ${toPosixPath("src/__sdd__")}`, "Run: sdd-lite init --type vue3"));
-    return out;
-  }
-
-  if ((await pathExists(boot)) || (await pathExists(bootJs))) out.push(ok("web.boot", "Found web boot file"));
-  else out.push(fail("web.boot", "Missing web boot file", "Re-run: sdd-lite init"));
-
-  const entryCandidates = [
-    path.join(root, "src", "main.ts"),
-    path.join(root, "src", "main.js"),
-    path.join(root, "src", "index.ts"),
-    path.join(root, "src", "index.js"),
-  ];
-  const entry = await firstExisting(entryCandidates);
-  if (!entry) out.push(warn("web.entry", "Entry file not found (checked src/main.* and src/index.*)."));
-  else {
-    const text = await readText(entry);
-    if (text.includes("sdd-lite:boot") || text.includes("./__sdd__/boot")) out.push(ok("web.entryPatch", `Entry patched: ${toPosixPath(path.relative(root, entry))}`));
-    else out.push(warn("web.entryPatch", `Entry not patched: ${toPosixPath(path.relative(root, entry))}`, "Add dev-only import of ./__sdd__/boot"));
-  }
-
-  const scenarioFiles = (await walkFiles(path.join(root, "src"))).filter((p) =>
-    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
-  );
-  const ids = new Map();
-  for (const file of scenarioFiles) {
-    const text = await readText(file);
-    const id = extractField(text, "id");
-    const title = extractField(text, "title");
-    const hasSetup = /setup\s*\(/.test(text) || /setup\s*:\s*\(/.test(text);
-
-    if (!id) out.push(warn("web.scenario.id", `Scenario missing id: ${toPosixPath(path.relative(root, file))}`));
-    else {
-      const prev = ids.get(id);
-      if (prev) out.push(fail("web.scenario.dup", `Duplicate scenario id: ${id}`, `${toPosixPath(path.relative(root, prev))} and ${toPosixPath(path.relative(root, file))}`));
-      else ids.set(id, file);
-    }
-    if (!title) out.push(warn("web.scenario.title", `Scenario missing title: ${toPosixPath(path.relative(root, file))}`));
-    if (!hasSetup) out.push(warn("web.scenario.setup", `Scenario missing setup(): ${toPosixPath(path.relative(root, file))}`));
-  }
-
-  out.push(ok("web.scenario.count", `Scenarios found (src): ${scenarioFiles.length}`));
-  return out;
-}
-
-async function doctorMp(root) {
-  /** @type {any[]} */
-  const out = [];
-  const mpRoot = (await pathExists(path.join(root, "miniprogram"))) ? path.join(root, "miniprogram") : "";
-  if (!mpRoot) return out;
-
-  const sddDir = path.join(mpRoot, "__sdd__");
-  const manifestTs = path.join(sddDir, "manifest.ts");
-  const manifestJs = path.join(sddDir, "manifest.js");
-  const pageDir = path.join(mpRoot, "pages", "__sdd__");
-
-  if (await pathExists(sddDir)) out.push(ok("mp.sddDir", `Found ${toPosixPath(path.relative(root, sddDir))}`));
-  else {
-    out.push(warn("mp.sddDir", `Missing ${toPosixPath(path.relative(root, sddDir))}`, "Run: sdd-lite init --type mp-wechat"));
-    return out;
-  }
-
-  if ((await pathExists(manifestTs)) || (await pathExists(manifestJs))) out.push(ok("mp.manifest", "Found mp manifest"));
-  else out.push(fail("mp.manifest", "Missing mp manifest", "Re-run: sdd-lite init --type mp-wechat"));
-
-  if (await pathExists(pageDir)) out.push(ok("mp.page", "Found mp debug page directory"));
-  else out.push(warn("mp.page", "Missing mp debug page", "Re-run: sdd-lite init --type mp-wechat"));
-
-  const appJson = path.join(mpRoot, "app.json");
-  if (!(await pathExists(appJson))) {
-    out.push(warn("mp.appJson", "Missing miniprogram/app.json (cannot check page registration)"));
-    return out;
-  }
-
-  try {
-    const obj = await readJson(appJson);
-    const pages = Array.isArray(obj.pages) ? obj.pages : [];
-    const mustHave = "pages/__sdd__/index";
-    if (pages.includes(mustHave)) out.push(ok("mp.pages", `app.json registered ${mustHave}`));
-    else out.push(warn("mp.pages", `app.json missing ${mustHave}`, `Add ${mustHave} into pages[]`));
-  } catch {
-    out.push(warn("mp.appJson", "Failed to parse miniprogram/app.json (cannot check page registration)"));
-  }
-
-  const scenarioFiles = (await walkFiles(mpRoot)).filter((p) =>
-    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
-  );
-  out.push(ok("mp.scenario.count", `Scenarios found (miniprogram): ${scenarioFiles.length}`));
-  return out;
-}
-
-async function firstExisting(candidates) {
-  for (const c of candidates) if (await pathExists(c)) return c;
-  return "";
-}
-
-function extractField(text, field) {
-  const m = text.match(new RegExp(`${field}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`));
-  return m?.[1] || "";
 }
 ```
 
@@ -635,95 +743,6 @@ async function findFirstExisting(candidates) {
 }
 ```
 
-## File: src/commands/manifest.js
-```javascript
-import path from "node:path";
-import { toPosixPath, walkFiles } from "../core/fs.js";
-
-export async function generateMpManifest(mpRoot, ext) {
-  const scenarioFiles = (await walkFiles(mpRoot)).filter((p) =>
-    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
-  );
-
-  const manifestDir = path.join(mpRoot, "__sdd__");
-  const imports = [];
-  const items = [];
-
-  scenarioFiles.sort((a, b) => a.localeCompare(b));
-  scenarioFiles.forEach((absPath, idx) => {
-    const rel = toPosixPath(path.relative(manifestDir, absPath));
-    const importPath = rel.startsWith(".") ? rel : `./${rel}`;
-    const varName = `s${idx}`;
-    imports.push(`import ${varName} from ${JSON.stringify(importPath)};`);
-    items.push(varName);
-  });
-
-  if (ext === "js") {
-    return [...imports, "", `export const scenarios = [${items.join(", ")}];`, ""].join("\n");
-  }
-
-  return [
-    `import type { Runtime } from "./runtime";`,
-    "",
-    `export type Scenario = {`,
-    `  id: string;`,
-    `  title: string;`,
-    `  note?: string;`,
-    `  setup(ctx: { runtime: Runtime; options?: any }): void | Promise<void>;`,
-    `};`,
-    "",
-    ...imports,
-    "",
-    `export const scenarios: Scenario[] = [${items.join(", ")}];`,
-    "",
-  ].join("\n");
-}
-```
-
-## File: src/core/args.js
-```javascript
-export function parseArgs(argv) {
-  /** @type {Record<string, string | boolean>} */
-  const flags = {};
-  /** @type {string[]} */
-  const positionals = [];
-
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (!token) continue;
-
-    if (token === "-h" || token === "--help") {
-      flags.help = true;
-      continue;
-    }
-
-    if (token.startsWith("--")) {
-      const key = token.slice(2);
-      const next = argv[i + 1];
-      if (next && !next.startsWith("-")) {
-        flags[key] = next;
-        i++;
-      } else {
-        flags[key] = true;
-      }
-      continue;
-    }
-
-    positionals.push(token);
-  }
-
-  const command = positionals[0] || "";
-  const args = positionals.slice(1);
-
-  return {
-    command,
-    args,
-    flags,
-    help: Boolean(flags.help),
-  };
-}
-```
-
 ## File: src/core/fs.js
 ```javascript
 import fs from "node:fs/promises";
@@ -876,81 +895,18 @@ export function toPosixPath(p) {
 }
 ```
 
-## File: src/core/io.js
-```javascript
-import readline from "node:readline";
-
-export async function promptText(message, { defaultValue } = {}) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const q = defaultValue ? `${message} (${defaultValue}): ` : `${message}: `;
-    const answer = await new Promise((resolve) => rl.question(q, resolve));
-    const trimmed = String(answer).trim();
-    return trimmed || defaultValue || "";
-  } finally {
-    rl.close();
-  }
-}
-
-export async function promptSelect(message, options) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    process.stdout.write(`${message}\n`);
-    options.forEach((opt, idx) => {
-      process.stdout.write(`  ${idx + 1}) ${opt}\n`);
-    });
-    const answer = await new Promise((resolve) => rl.question(`Select 1-${options.length}: `, resolve));
-    const n = Number(String(answer).trim());
-    if (!Number.isFinite(n) || n < 1 || n > options.length) {
-      throw new Error(`Invalid selection: ${answer}`);
-    }
-    return options[n - 1];
-  } finally {
-    rl.close();
-  }
-}
-```
-
-## File: src/core/json.js
-```javascript
-import { patchTextFile, readText } from "./fs.js";
-
-export async function readJson(filePath) {
-  const text = await readText(filePath);
-  return JSON.parse(text);
-}
-
-export async function patchJsonFile(filePath, patcher, report) {
-  return await patchTextFile(
-    filePath,
-    (prevText) => {
-      let prevObj;
-      try {
-        prevObj = JSON.parse(prevText);
-      } catch {
-        return null;
-      }
-      const nextObj = patcher(prevObj);
-      if (nextObj == null) return null;
-      const nextText = JSON.stringify(nextObj, null, 2) + "\n";
-      return nextText === prevText ? null : nextText;
-    },
-    report,
-  );
-}
-```
-
-## File: src/core/project.js
+## File: src/core/mp.js
 ```javascript
 import path from "node:path";
 import { pathExists } from "./fs.js";
 
-export async function detectPreferredLangExt(projectRoot, { explicit } = {}) {
-  if (explicit === "ts" || explicit === "js") return explicit;
-  if (await pathExists(path.join(projectRoot, "tsconfig.json"))) return "ts";
-  if (await pathExists(path.join(projectRoot, "src", "main.ts"))) return "ts";
-  if (await pathExists(path.join(projectRoot, "miniprogram", "tsconfig.json"))) return "ts";
-  return "js";
+export async function detectMpRoot(projectRoot) {
+  const miniprogramRoot = path.join(projectRoot, "miniprogram");
+  if (await pathExists(path.join(miniprogramRoot, "app.json"))) return miniprogramRoot;
+
+  if (await pathExists(path.join(projectRoot, "app.json"))) return projectRoot;
+
+  return null;
 }
 ```
 
@@ -981,125 +937,6 @@ export function printReport(report) {
   pushGroup("NOTE", report.notes);
 
   process.stdout.write(`${lines.join("\n")}\n`);
-}
-```
-
-## File: src/templates/module.js
-```javascript
-export function tplModuleSddTools(ext) {
-  if (ext === "js") {
-    return `
-export function logScope(scope) {
-  return (...args) => console.log(\`[SDD:\${scope}]\`, ...args);
-}
-`.trimStart();
-  }
-
-  return `
-export function logScope(scope: string) {
-  return (...args: any[]) => console.log(\`[SDD:\${scope}]\`, ...args);
-}
-`.trimStart();
-}
-
-export function tplModuleMocksIndex(ext) {
-  if (ext === "js") {
-    return `
-export const mocks = {};
-`.trimStart();
-  }
-
-  return `
-export const mocks = {};
-`.trimStart();
-}
-
-export function tplModuleScenariosReadmeMd() {
-  return `
-# SDD Scenarios (module)
-
-每个场景文件必须：
-
-\`\`\`ts
-export default {
-  id: string,
-  title: string,
-  note?: string,
-  setup({ runtime, options }): void
-}
-\`\`\`
-
-注意：任何副作用都必须通过 \`runtime.onReset\` 登记清理，保证切换场景不污染环境。
-`.trimStart();
-}
-
-export function tplScenarioBasic({ id, title, ext }) {
-  const setupSig = ext === "js" ? "setup({ runtime, options })" : "setup({ runtime, options }: any)";
-  return `
-export default {
-  id: ${JSON.stringify(id)},
-  title: ${JSON.stringify(title)},
-  note: [
-    "人工验证：",
-    "1) 打开目标页面/模块",
-    "2) 运行 window.SDD.run(\\"${id}\\")",
-    "3) 观察 console log / UI 变化是否符合预期",
-  ].join("\\n"),
-  ${setupSig} {
-    console.log("[SDD] setup", ${JSON.stringify(id)}, { options });
-
-    const timer = setInterval(() => {
-      console.log("[SDD] tick", ${JSON.stringify(id)});
-    }, 1000);
-
-    runtime.onReset(() => {
-      clearInterval(timer);
-    });
-  },
-};
-`.trimStart();
-}
-
-export function tplScenarioApiVariants({ id, title, ext }) {
-  const setupSig = ext === "js" ? "setup({ runtime, options })" : "setup({ runtime, options }: any)";
-  return `
-import { installApiPatch } from "../helpers/apiPatch";
-
-export default {
-  id: ${JSON.stringify(id)},
-  title: ${JSON.stringify(title)},
-  note: [
-    "人工验证：",
-    "1) 运行该场景后，触发页面里的接口请求动作",
-    "2) 在 console/Network 面板观察不同 variant 的效果",
-    "3) 切换场景后，拦截必须被清理（不污染其他场景）",
-  ].join("\\n"),
-  ${setupSig} {
-    const uninstall = installApiPatch({
-      runtime,
-      variant: options?.variant ?? "happy-path",
-    });
-    runtime.onReset(uninstall);
-  },
-};
-`.trimStart();
-}
-
-export function tplHelperApiPatch(ext) {
-  const sig = ext === "js" ? "export function installApiPatch({ runtime, variant })" : "export function installApiPatch({ runtime, variant }: any)";
-  return `
-${sig} {
-  void runtime;
-  console.log("[SDD] installApiPatch", { variant });
-
-  // TODO: 在这里做你项目里的 API 拦截/patch（不要绑定 axios/fetch，保持轻量）
-  // TODO: 必须返回可逆的 uninstall（并在 reset 时调用）
-
-  return () => {
-    console.log("[SDD] uninstallApiPatch", { variant });
-  };
-}
-`.trimStart();
 }
 ```
 
@@ -1737,15 +1574,198 @@ export async function main(argv) {
 }
 ```
 
+## File: README.md
+```markdown
+# sdd-lite CLI
+
+`sdd-lite` 是一个用于在项目中快速落地 SDD-lite（场景驱动开发-lite）目录与骨架文件的 CLI。
+
+## 安装
+
+- 全局安装：`npm i -g @huige9999/sdd-lite`
+- 免安装运行：`npx @huige9999/sdd-lite --help`
+
+## 使用
+
+- 帮助：`sdd-lite --help`
+- 初始化：`sdd-lite init`
+- 自检：`sdd-lite doctor`
+- 模块骨架：`sdd-lite add-module <modulePath>`
+- 添加场景：`sdd-lite add-scenario <modulePath>`
+
+## 环境要求
+
+- Node.js `>= 18`
+```
+
+## File: src/commands/doctor.js
+```javascript
+import path from "node:path";
+import { pathExists, readText, toPosixPath, walkFiles } from "../core/fs.js";
+import { readJson } from "../core/json.js";
+import { detectMpRoot } from "../core/mp.js";
+
+function ok(id, message, fix) {
+  return { id, level: "ok", message, fix };
+}
+function warn(id, message, fix) {
+  return { id, level: "warn", message, fix };
+}
+function fail(id, message, fix) {
+  return { id, level: "fail", message, fix };
+}
+
+export async function cmdDoctor(ctx, parsed) {
+  const checks = [];
+  const root = ctx.cwd;
+
+  const type = String(parsed.flags.type || "auto");
+  const runWeb = type === "auto" || type === "web" || type === "vue2" || type === "vue3";
+  const runMp = type === "auto" || type === "mp-wechat" || type === "mp" || type === "wechat";
+
+  if (runWeb) checks.push(...(await doctorWeb(root)));
+  if (runMp) checks.push(...(await doctorMp(root)));
+
+  if (parsed.flags.json) {
+    process.stdout.write(JSON.stringify({ checks }, null, 2) + "\n");
+    return;
+  }
+
+  for (const c of checks) {
+    const tag = c.level === "ok" ? "[OK]" : c.level === "warn" ? "[WARN]" : "[FAIL]";
+    process.stdout.write(`${tag} ${c.message}\n`);
+    if (c.fix) process.stdout.write(`      fix: ${c.fix}\n`);
+  }
+}
+
+async function doctorWeb(root) {
+  /** @type {any[]} */
+  const out = [];
+  const sddDir = path.join(root, "src", "__sdd__");
+  const boot = path.join(sddDir, "boot.ts");
+  const bootJs = path.join(sddDir, "boot.js");
+
+  if (await pathExists(sddDir)) out.push(ok("web.sddDir", `Found ${toPosixPath("src/__sdd__")}`));
+  else {
+    out.push(warn("web.sddDir", `Missing ${toPosixPath("src/__sdd__")}`, "Run: sdd-lite init --type vue3"));
+    return out;
+  }
+
+  if ((await pathExists(boot)) || (await pathExists(bootJs))) out.push(ok("web.boot", "Found web boot file"));
+  else out.push(fail("web.boot", "Missing web boot file", "Re-run: sdd-lite init"));
+
+  const entryCandidates = [
+    path.join(root, "src", "main.ts"),
+    path.join(root, "src", "main.js"),
+    path.join(root, "src", "index.ts"),
+    path.join(root, "src", "index.js"),
+  ];
+  const entry = await firstExisting(entryCandidates);
+  if (!entry) out.push(warn("web.entry", "Entry file not found (checked src/main.* and src/index.*)."));
+  else {
+    const text = await readText(entry);
+    if (text.includes("sdd-lite:boot") || text.includes("./__sdd__/boot")) out.push(ok("web.entryPatch", `Entry patched: ${toPosixPath(path.relative(root, entry))}`));
+    else out.push(warn("web.entryPatch", `Entry not patched: ${toPosixPath(path.relative(root, entry))}`, "Add dev-only import of ./__sdd__/boot"));
+  }
+
+  const scenarioFiles = (await walkFiles(path.join(root, "src"))).filter((p) =>
+    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
+  );
+  const ids = new Map();
+  for (const file of scenarioFiles) {
+    const text = await readText(file);
+    const id = extractField(text, "id");
+    const title = extractField(text, "title");
+    const hasSetup = /setup\s*\(/.test(text) || /setup\s*:\s*\(/.test(text);
+
+    if (!id) out.push(warn("web.scenario.id", `Scenario missing id: ${toPosixPath(path.relative(root, file))}`));
+    else {
+      const prev = ids.get(id);
+      if (prev) out.push(fail("web.scenario.dup", `Duplicate scenario id: ${id}`, `${toPosixPath(path.relative(root, prev))} and ${toPosixPath(path.relative(root, file))}`));
+      else ids.set(id, file);
+    }
+    if (!title) out.push(warn("web.scenario.title", `Scenario missing title: ${toPosixPath(path.relative(root, file))}`));
+    if (!hasSetup) out.push(warn("web.scenario.setup", `Scenario missing setup(): ${toPosixPath(path.relative(root, file))}`));
+  }
+
+  out.push(ok("web.scenario.count", `Scenarios found (src): ${scenarioFiles.length}`));
+  return out;
+}
+
+async function doctorMp(root) {
+  /** @type {any[]} */
+  const out = [];
+  const mpRoot = await detectMpRoot(root);
+  if (!mpRoot) return out;
+
+  const sddDir = path.join(mpRoot, "__sdd__");
+  const manifestTs = path.join(sddDir, "manifest.ts");
+  const manifestJs = path.join(sddDir, "manifest.js");
+  const pageDir = path.join(mpRoot, "pages", "__sdd__");
+
+  if (await pathExists(sddDir)) out.push(ok("mp.sddDir", `Found ${toPosixPath(path.relative(root, sddDir))}`));
+  else {
+    out.push(warn("mp.sddDir", `Missing ${toPosixPath(path.relative(root, sddDir))}`, "Run: sdd-lite init --type mp-wechat"));
+    return out;
+  }
+
+  if ((await pathExists(manifestTs)) || (await pathExists(manifestJs))) out.push(ok("mp.manifest", "Found mp manifest"));
+  else out.push(fail("mp.manifest", "Missing mp manifest", "Re-run: sdd-lite init --type mp-wechat"));
+
+  if (await pathExists(pageDir)) out.push(ok("mp.page", "Found mp debug page directory"));
+  else out.push(warn("mp.page", "Missing mp debug page", "Re-run: sdd-lite init --type mp-wechat"));
+
+  const appJson = path.join(mpRoot, "app.json");
+  if (!(await pathExists(appJson))) {
+    out.push(warn("mp.appJson", `Missing ${toPosixPath(path.relative(root, appJson))} (cannot check page registration)`));
+    return out;
+  }
+
+  try {
+    const obj = await readJson(appJson);
+    const pages = Array.isArray(obj.pages) ? obj.pages : [];
+    const mustHave = "pages/__sdd__/index";
+    if (pages.includes(mustHave)) out.push(ok("mp.pages", `app.json registered ${mustHave}`));
+    else out.push(warn("mp.pages", `app.json missing ${mustHave}`, `Add ${mustHave} into pages[]`));
+  } catch {
+    out.push(warn("mp.appJson", `Failed to parse ${toPosixPath(path.relative(root, appJson))} (cannot check page registration)`));
+  }
+
+  const scenarioFiles = (await walkFiles(mpRoot)).filter((p) =>
+    /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
+  );
+  out.push(ok("mp.scenario.count", `Scenarios found (mp): ${scenarioFiles.length}`));
+  return out;
+}
+
+async function firstExisting(candidates) {
+  for (const c of candidates) if (await pathExists(c)) return c;
+  return "";
+}
+
+function extractField(text, field) {
+  const m = text.match(new RegExp(`${field}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`));
+  return m?.[1] || "";
+}
+```
+
 ## File: package.json
 ```json
 {
-  "name": "sdd-lite-cli",
-  "private": true,
+  "name": "@huige9999/sdd-lite",
+  "version": "0.2.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "sdd-lite": "bin/sdd-lite.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
   "scripts": {
     "sdd-lite": "node bin/sdd-lite.js",
     "doctor": "node bin/sdd-lite.js doctor",

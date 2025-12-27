@@ -136,9 +136,11 @@ function makeWebEntrySnippetVite(bootImportPath) {
 }
 
 function makeWebEntrySnippetWebpack(bootImportPath) {
+  // [优化] 简化判断逻辑，只要不是生产环境就引入
+  // 如果是 Vue CLI，process.env.NODE_ENV 通常是可用的
   return [
-    "if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {",
-    `  try { require(${JSON.stringify(bootImportPath)}); } catch {}`,
+    `if (process.env.NODE_ENV !== 'production') {`,
+    `  try { require(${JSON.stringify(bootImportPath)}); } catch (e) { console.warn('[SDD] Boot failed', e); }`,
     "}",
   ].join("\n");
 }
@@ -209,23 +211,34 @@ async function detectWebBundler(projectRoot, bundlerFlag) {
   const normalized = String(bundlerFlag || "auto");
   if (normalized === "vite" || normalized === "webpack") return normalized;
 
+  // 1. Check Vite config files
   const viteConfigs = ["vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.cjs"].map((f) =>
     path.join(projectRoot, f),
   );
   if (await findFirstExisting(viteConfigs)) return "vite";
 
+  // 2. Check package.json dependencies
   const pkgJson = path.join(projectRoot, "package.json");
   if (await pathExists(pkgJson)) {
     try {
       const pkg = JSON.parse(await readText(pkgJson));
       const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+      
       if (typeof deps.vite === "string") return "vite";
+      
+      // [新增] 显式检测 Vue CLI (基于 Webpack)
+      if (typeof deps["@vue/cli-service"] === "string") return "webpack";
+      
     } catch {
       // ignore
     }
   }
 
-  // Default: webpack/unknown-safe
+  // 3. Default fallback
+  // [优化] 如果是自动模式且没有任何特征，给个提示
+  if (normalized === "auto") {
+    console.log("  [info] No specific bundler detected, defaulting to Webpack.");
+  }
   return "webpack";
 }
 

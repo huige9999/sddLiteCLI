@@ -132,19 +132,27 @@ function isScenario(x) {
 
 export async function discoverScenarios() {
   const out = [];
-  if (typeof require !== "undefined" && typeof require.context === "function") {
-    const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
-    for (const key of ctx.keys()) {
-      const mod = ctx(key);
-      const scenario = mod?.default;
-      if (isScenario(scenario)) out.push(scenario);
+  // [修复] 移除外层 if (typeof require !== "undefined") 判断
+  // Webpack 会在编译时替换 require.context，运行时不需要 require 变量存在
+  try {
+    if (typeof require.context === "function") {
+      const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
+      for (const key of ctx.keys()) {
+        const mod = ctx(key);
+        const scenario = mod?.default;
+        if (isScenario(scenario)) out.push(scenario);
+      }
     }
+  } catch (e) {
+    // 仅在非 Webpack 环境或宏未替换时会触发
+    console.warn("[SDD] require.context failed or not available", e);
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 `.trimStart();
   }
 
+  // TypeScript 版本
   return `
 import type { Runtime } from "./runtime";
 
@@ -169,13 +177,19 @@ function isScenario(x: any): x is Scenario {
 
 export async function discoverScenarios(): Promise<Scenario[]> {
   const out: Scenario[] = [];
-  if (typeof require?.context === "function") {
-    const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
-    for (const key of ctx.keys()) {
-      const mod = ctx(key);
-      const scenario = mod?.default;
-      if (isScenario(scenario)) out.push(scenario);
+  // [修复] 移除外层运行时检查，改用 try-catch
+  try {
+    // @ts-ignore
+    if (typeof require?.context === "function") {
+      const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
+      for (const key of ctx.keys()) {
+        const mod = ctx(key);
+        const scenario = mod?.default;
+        if (isScenario(scenario)) out.push(scenario);
+      }
     }
+  } catch (e) {
+    console.warn("[SDD] require.context failed or not available", e);
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
