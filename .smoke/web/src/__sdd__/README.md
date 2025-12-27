@@ -1,0 +1,11 @@
+# SDD-lite (Web)
+
+## 用法（开发环境）
+
+- 查看场景列表：`window.SDD.list()`
+- 运行场景：`window.SDD.run("<id>")`
+
+## 场景目录
+
+- 全局只放基础设施：`src/__sdd__/`
+- 所有 helpers/mocks/scenarios 必须放在模块内：`<module>/__sdd__/`

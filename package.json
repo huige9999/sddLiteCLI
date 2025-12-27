@@ -1,0 +1,17 @@
+{
+  "name": "sdd-lite-cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sdd-lite": "bin/sdd-lite.js"
+  },
+  "scripts": {
+    "sdd-lite": "node bin/sdd-lite.js",
+    "doctor": "node bin/sdd-lite.js doctor",
+    "init": "node bin/sdd-lite.js init"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+

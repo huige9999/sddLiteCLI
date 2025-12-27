@@ -1,0 +1,27 @@
+import { createRuntime } from "./runtime";
+import { discoverScenarios } from "./discover";
+
+const runtime = createRuntime();
+
+function ensureBooted() {
+  const w = window;
+  if (w.SDD?.__inited) return;
+
+  w.SDD = {
+    __inited: true,
+    list: async () => {
+      const scenarios = await discoverScenarios();
+      return scenarios.map((s) => ({ id: s.id, title: s.title, note: s.note }));
+    },
+    run: async (id, options) => {
+      const scenarios = await discoverScenarios();
+      const scenario = scenarios.find((s) => s.id === id);
+      if (!scenario) throw new Error(`Scenario not found: ${id}`);
+      await runtime.resetEnv();
+      await scenario.setup({ runtime, options });
+    },
+    runtime,
+  };
+}
+
+ensureBooted();

@@ -1,0 +1,16 @@
+<view class="page">
+  <view class="title">SDD-lite</view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <view wx:if="{{note}}" class="note">{{note}}</view>
+
+  <view class="list">
+    <view wx:for="{{scenarios}}" wx:key="id" class="item">
+      <view class="meta">
+        <view class="id">{{item.id}}</view>
+        <view class="t">{{item.title}}</view>
+      </view>
+      <button data-id="{{item.id}}" bindtap="onRunTap" size="mini">运行</button>
+    </view>
+  </view>
+</view>

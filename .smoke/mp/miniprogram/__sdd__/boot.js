@@ -1,0 +1,32 @@
+import { createRuntime } from "./runtime";
+import { scenarios } from "./manifest";
+
+const runtime = createRuntime();
+
+export async function listScenarios() {
+  return scenarios.map((s) => ({ id: s.id, title: s.title, note: s.note }));
+}
+
+export async function runScenario(id, options) {
+  const scenario = scenarios.find((s) => s.id === id);
+  if (!scenario) throw new Error(`Scenario not found: ${id}`);
+  await runtime.resetEnv();
+  await scenario.setup({ runtime, options });
+}
+
+export function getRuntime() {
+  return runtime;
+}
+
+function attachGlobal() {
+  const g = globalThis;
+  if (g.SDD?.__inited) return;
+  g.SDD = {
+    __inited: true,
+    list: listScenarios,
+    run: runScenario,
+    runtime,
+  };
+}
+
+attachGlobal();

@@ -1,0 +1,20 @@
+# AGENT_GUIDE (SDD-lite)
+
+必须遵守：
+
+1. 全局极薄：只放扫描/boot/runtime，禁止把业务 helpers/mocks 放到 `src/__sdd__/`
+2. 模块自治：helpers/mocks/scenarios 都必须在 `<module>/__sdd__/`
+3. 场景结构固定：
+
+```ts
+export default {
+  id: string,
+  title: string,
+  note?: string,
+  setup({ runtime, options }): void
+}
+```
+
+4. 清理机制优先级最高：任何副作用必须 `runtime.onReset(fn)` 登记；切场景会先 `runtime.resetEnv()`
+5. 不追求断言/自动化：以“人工验证步骤 + 可观察输出”为主
+6. 可复现输入：固定数据/固定 seed，避免随机

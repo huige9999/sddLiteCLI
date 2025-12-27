@@ -1,0 +1,7 @@
+.page { padding: 16px; }
+.title { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
+.error { color: #b91c1c; margin-bottom: 12px; white-space: pre-wrap; }
+.note { color: #374151; margin-bottom: 12px; white-space: pre-wrap; }
+.item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+.id { font-family: monospace; color: #111827; }
+.t { color: #6b7280; font-size: 12px; }
