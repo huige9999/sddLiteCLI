@@ -7,6 +7,5 @@ export async function detectMpRoot(projectRoot) {
 
   if (await pathExists(path.join(projectRoot, "app.json"))) return projectRoot;
 
-  return "";
+  return null;
 }
-

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { pathExists, readText, toPosixPath, walkFiles } from "../core/fs.js";
 import { readJson } from "../core/json.js";
+import { detectMpRoot } from "../core/mp.js";
 
 function ok(id, message, fix) {
   return { id, level: "ok", message, fix };
@@ -92,7 +93,7 @@ async function doctorWeb(root) {
 async function doctorMp(root) {
   /** @type {any[]} */
   const out = [];
-  const mpRoot = (await pathExists(path.join(root, "miniprogram"))) ? path.join(root, "miniprogram") : "";
+  const mpRoot = await detectMpRoot(root);
   if (!mpRoot) return out;
 
   const sddDir = path.join(mpRoot, "__sdd__");
@@ -114,7 +115,7 @@ async function doctorMp(root) {
 
   const appJson = path.join(mpRoot, "app.json");
   if (!(await pathExists(appJson))) {
-    out.push(warn("mp.appJson", "Missing miniprogram/app.json (cannot check page registration)"));
+    out.push(warn("mp.appJson", `Missing ${toPosixPath(path.relative(root, appJson))} (cannot check page registration)`));
     return out;
   }
 
@@ -125,13 +126,13 @@ async function doctorMp(root) {
     if (pages.includes(mustHave)) out.push(ok("mp.pages", `app.json registered ${mustHave}`));
     else out.push(warn("mp.pages", `app.json missing ${mustHave}`, `Add ${mustHave} into pages[]`));
   } catch {
-    out.push(warn("mp.appJson", "Failed to parse miniprogram/app.json (cannot check page registration)"));
+    out.push(warn("mp.appJson", `Failed to parse ${toPosixPath(path.relative(root, appJson))} (cannot check page registration)`));
   }
 
   const scenarioFiles = (await walkFiles(mpRoot)).filter((p) =>
     /\/__sdd__\/scenarios\/.*\.scenario\.(ts|js)$/.test(toPosixPath(p)),
   );
-  out.push(ok("mp.scenario.count", `Scenarios found (miniprogram): ${scenarioFiles.length}`));
+  out.push(ok("mp.scenario.count", `Scenarios found (mp): ${scenarioFiles.length}`));
   return out;
 }
 
