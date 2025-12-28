@@ -132,11 +132,17 @@ function isScenario(x) {
 
 export async function discoverScenarios() {
   const out = [];
-  // [修复] 移除外层 if (typeof require !== "undefined") 判断
-  // Webpack 会在编译时替换 require.context，运行时不需要 require 变量存在
+  
+  // [最终修复]
+  // 1. 不要判断 typeof require.context
+  // 2. 直接调用，因为 Webpack 编译时会把 require.context(...) 替换成实际代码
+  // 3. 这里的 try-catch 是为了防止在非 Webpack 环境（如 Jest）报错
   try {
-    if (typeof require.context === "function") {
-      const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
+    // @ts-ignore
+    const ctx = require.context("..", true, /__sdd__\\/scenarios\\/.*\\.scenario\\.(ts|js)$/);
+    
+    // 只要 Webpack 处理了，ctx 就是一个函数，不仅有 keys() 方法
+    if (ctx) {
       for (const key of ctx.keys()) {
         const mod = ctx(key);
         const scenario = mod?.default;
@@ -144,9 +150,10 @@ export async function discoverScenarios() {
       }
     }
   } catch (e) {
-    // 仅在非 Webpack 环境或宏未替换时会触发
-    console.warn("[SDD] require.context failed or not available", e);
+    // 只有在真的没有 require.context 的环境（如原生 Node 或未配置的 Jest）才会进这里
+    console.warn("[SDD] scenarios load failed", e);
   }
+  
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 `.trimStart();
